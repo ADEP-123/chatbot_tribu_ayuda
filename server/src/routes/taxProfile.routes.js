@@ -6,5 +6,6 @@ const router = express.Router();
 
 router.get('/:year', requireAuth, controller.getProfile);
 router.put('/:year', requireAuth, controller.upsertProfile);
+router.get('/:year/obligation', requireAuth, controller.getObligation);
 
 module.exports = router;
