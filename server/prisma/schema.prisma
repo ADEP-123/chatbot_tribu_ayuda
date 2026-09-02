@@ -8,14 +8,15 @@ datasource db {
 }
 
 model User {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  name         String?
-  isAdmin      Boolean   @default(false)
-  createdAt    DateTime  @default(now())
-  profiles     TaxProfile[]
+  id            String         @id @default(uuid())
+  email         String         @unique
+  password      String
+  name          String?
+  isAdmin       Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  profiles      TaxProfile[]
   conversations Conversation[]
-  reports      Report[]
+  reports       Report[]
 }
 
 // Reglas fiscales de un año gravable — editable desde el panel admin
@@ -62,6 +63,7 @@ model TaxProfile {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   reports             Report[]
+  @@unique([userId, taxYearId])
 }
 
 model Conversation {
