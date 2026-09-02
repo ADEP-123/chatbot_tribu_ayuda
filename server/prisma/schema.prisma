@@ -1,13 +1,98 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  name         String?
+  isAdmin      Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  profiles     TaxProfile[]
+  conversations Conversation[]
+  reports      Report[]
+}
+
+// Reglas fiscales de un año gravable — editable desde el panel admin
+model TaxYear {
+  id                    String    @id @default(uuid())
+  year                  Int       @unique // año gravable, ej. 2025
+  uvtValue              Decimal   // valor de la UVT en pesos ese año
+  topePatrimonioUvt     Decimal   @default(4500)
+  topeIngresosUvt       Decimal   @default(1400)
+  topeConsumosUvt       Decimal   @default(1400)
+  topeComprasUvt        Decimal   @default(1400)
+  topeConsignacionesUvt Decimal   @default(1400)
+  sancionMinimaUvt      Decimal   @default(10)
+  declarationStart      DateTime // ej. 2026-08-12
+  declarationEnd        DateTime // ej. 2026-10-26
+  deadlines             DeclarationDeadline[]
+  profiles              TaxProfile[]
+}
+
+// Fecha límite específica según los dos últimos dígitos del NIT
+model DeclarationDeadline {
+  id           String   @id @default(uuid())
+  taxYear      TaxYear  @relation(fields: [taxYearId], references: [id])
+  taxYearId    String
+  nitDigitFrom Int      // ej. 01
+  nitDigitTo   Int      // ej. 02
+  dueDate      DateTime
+}
+
+// Datos tributarios que el chatbot extrae de la conversación
+model TaxProfile {
+  id                  String   @id @default(uuid())
+  user                User     @relation(fields: [userId], references: [id])
+  userId              String
+  taxYear             TaxYear  @relation(fields: [taxYearId], references: [id])
+  taxYearId           String
+  ingresosBrutos      Decimal  @default(0)
+  patrimonioBruto     Decimal  @default(0)
+  consumosTarjeta     Decimal  @default(0)
+  comprasConsumos     Decimal  @default(0)
+  consignaciones      Decimal  @default(0)
+  esResponsableIva    Boolean  @default(false)
+  ultimosDigitosNit   String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  reports             Report[]
+}
+
+model Conversation {
+  id        String    @id @default(uuid())
+  user      User      @relation(fields: [userId], references: [id])
+  userId    String
+  status    String    @default("active") // active | completed
+  createdAt DateTime  @default(now())
+  messages  Message[]
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  conversationId String
+  role           String       // "user" | "assistant"
+  content        String
+  extractedData  Json?        // datos estructurados que Claude extrajo de este mensaje
+  createdAt      DateTime     @default(now())
+}
+
+// Reporte final generado al terminar la conversación
+model Report {
+  id              String     @id @default(uuid())
+  user            User       @relation(fields: [userId], references: [id])
+  userId          String
+  taxProfile      TaxProfile @relation(fields: [taxProfileId], references: [id])
+  taxProfileId    String
+  debeDeclarar    Boolean
+  motivos         Json       // array de topes superados, ej. ["patrimonio", "consignaciones"]
+  fechaLimite     DateTime?
+  montoEstimado   Decimal?
+  generatedAt     DateTime   @default(now())
 }
