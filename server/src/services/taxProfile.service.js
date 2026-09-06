@@ -24,4 +24,20 @@ async function getProfile(userId, year) {
   });
 }
 
-module.exports = { upsertProfile, getProfile };
+const REQUIRED_FIELDS = [
+  { field: 'ingresosBrutos', label: 'ingresos brutos del año' },
+  { field: 'patrimonioBruto', label: 'patrimonio bruto a 31 de diciembre' },
+  { field: 'consumosTarjeta', label: 'consumos con tarjeta de crédito' },
+  { field: 'comprasConsumos', label: 'compras y consumos totales' },
+  { field: 'consignaciones', label: 'consignaciones y depósitos' },
+  { field: 'esResponsableIva', label: 'si eres responsable de IVA' },
+];
+
+function getMissingFields(profile) {
+  if (!profile) return REQUIRED_FIELDS;
+  return REQUIRED_FIELDS.filter(
+    ({ field }) => profile[field] === null || profile[field] === undefined
+  );
+}
+
+module.exports = { upsertProfile, getProfile, REQUIRED_FIELDS, getMissingFields };
