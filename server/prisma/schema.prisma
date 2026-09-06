@@ -19,6 +19,19 @@ model User {
   reports       Report[]
 }
 
+model TaxBracket {
+  id              String   @id @default(uuid())
+  taxYear         TaxYear  @relation(fields: [taxYearId], references: [id], onDelete: Cascade)
+  taxYearId       String
+  orden           Int
+  rangoDesdeUvt   Decimal
+  rangoHastaUvt   Decimal?
+  tarifaMarginal  Decimal
+  impuestoBaseUvt Decimal  @default(0)
+
+  @@unique([taxYearId, orden])
+}
+
 // Reglas fiscales de un año gravable — editable desde el panel admin
 model TaxYear {
   id                    String    @id @default(uuid())
@@ -34,6 +47,7 @@ model TaxYear {
   declarationEnd        DateTime // ej. 2026-10-26
   deadlines             DeclarationDeadline[]
   profiles              TaxProfile[]
+  brackets              TaxBracket[]
 }
 
 // Fecha límite específica según los dos últimos dígitos del NIT

@@ -1,9 +1,13 @@
 const prisma = require('../db');
 const taxRulesService = require('./taxRules.service');
 const taxProfileService = require('./taxProfile.service');
+const { calculateEstimatedTax } = require('./taxCalculator.service');
 
 async function generateReport(userId, year) {
-  const taxYear = await prisma.taxYear.findUnique({ where: { year: Number(year) } });
+  const taxYear = await prisma.taxYear.findUnique({
+    where: { year: Number(year) },
+    include: { brackets: true },
+  });
   if (!taxYear) {
     const error = new Error('Año gravable no configurado');
     error.status = 400;
@@ -20,6 +24,16 @@ async function generateReport(userId, year) {
   const missingFields = taxProfileService.getMissingFields(taxProfile);
   const evaluation = taxRulesService.evaluateObligation(taxProfile, taxYear);
 
+  let montoEstimado = null;
+  if (evaluation.debeDeclarar && taxYear.brackets.length > 0) {
+    const { impuestoPesos } = calculateEstimatedTax(
+      Number(taxProfile.ingresosBrutos || 0),
+      taxYear.uvtValue,
+      taxYear.brackets
+    );
+    montoEstimado = impuestoPesos;
+  }
+
   const report = await prisma.report.create({
     data: {
       userId,
@@ -28,6 +42,7 @@ async function generateReport(userId, year) {
       motivos: evaluation.motivos,
       camposFaltantes: missingFields.map((f) => f.label),
       fechaLimite: evaluation.debeDeclarar ? taxYear.declarationEnd : null,
+      montoEstimado,
     },
   });
 

@@ -840,3 +840,18 @@ td a:hover {
   background: var(--bg-tertiary);
   color: var(--danger);
 }
+
+.report-estimate {
+  text-align: center;
+}
+.report-estimate-amount {
+  font-size: 1.8rem;
+  font-weight: 600;
+  margin: 0.25rem 0 0.75rem;
+  color: var(--accent);
+}
+.report-estimate-note {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 0;
+}
