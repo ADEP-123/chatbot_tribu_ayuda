@@ -5,6 +5,7 @@ require('dotenv').config();
 const authRoutes = require('./src/routes/auth.routes');
 const taxYearRoutes = require('./src/routes/taxYear.routes');
 const taxProfileRoutes = require('./src/routes/taxProfile.routes');
+const conversationRoutes = require('./src/routes/conversation.routes');
 
 const app = express();
 app.use(cors());
@@ -14,6 +15,7 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.use('/api/auth', authRoutes);
 app.use('/api/tax-years', taxYearRoutes);
 app.use('/api/tax-profiles', taxProfileRoutes);
+app.use('/api/conversations', conversationRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err);
