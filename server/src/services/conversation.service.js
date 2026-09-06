@@ -3,6 +3,13 @@ const { NAME_QUESTION, FLOW_STEPS, FLOW_ORDER } = require('./flow');
 const { extractStepAnswer } = require('./stepExtractor.service');
 const taxProfileService = require('./taxProfile.service');
 
+const NEGATIVE_ZERO_PATTERN =
+  /\b(no\s+(he|tengo|tuve|gast[eé]|us[eé]|consign[eé]|recib[ií])|nada|ninguno|ninguna|\bcero\b)/i;
+
+function isNegativeZeroAnswer(content) {
+  return NEGATIVE_ZERO_PATTERN.test(content) && !/\d/.test(content);
+}
+
 async function getCurrentTaxYear() {
   const taxYear = await prisma.taxYear.findFirst({ orderBy: { year: 'desc' } });
   if (!taxYear) {
@@ -63,23 +70,37 @@ function annualizeMoney(result) {
 }
 
 async function handleTaxStep(userId, taxYear, step, content) {
-  const result = await extractStepAnswer(FLOW_STEPS[step], content);
+  const stepDef = FLOW_STEPS[step];
+
+  // Atajo determinista: si el usuario niega tener el rubro sin dar ninguna cifra,
+  // lo tratamos como 0 directamente — más confiable que depender de que el modelo
+  // reconozca la negación en cada intento, sobre todo en preguntas de dinero.
+  if (
+    (stepDef.type === 'money' || stepDef.type === 'money_single') &&
+    isNegativeZeroAnswer(content)
+  ) {
+    await taxProfileService.upsertProfile(userId, taxYear.year, { [step]: 0 });
+    const nextStep = await getCurrentStep(userId);
+    return { reply: questionForStep(nextStep), extracted: { [step]: 0 }, nextStep };
+  }
+
+  const result = await extractStepAnswer(stepDef, content);
 
   if (!result.esSuficiente) {
-    return { reply: FLOW_STEPS[step].clarification, extracted: null };
+    return { reply: stepDef.clarification, extracted: null };
   }
 
   let value;
-  if (FLOW_STEPS[step].type === 'boolean') {
+  if (stepDef.type === 'boolean') {
     value = typeof result.valor === 'boolean' ? result.valor : null;
-  } else if (FLOW_STEPS[step].type === 'money_single') {
+  } else if (stepDef.type === 'money_single') {
     value = Number.isFinite(result.monto) && result.monto >= 0 ? result.monto : null;
   } else {
     value = annualizeMoney(result);
   }
 
   if (value === null) {
-    return { reply: FLOW_STEPS[step].clarification, extracted: null };
+    return { reply: stepDef.clarification, extracted: null };
   }
 
   await taxProfileService.upsertProfile(userId, taxYear.year, { [step]: value });
@@ -99,15 +120,16 @@ async function sendMessage(conversationId, userId, content) {
     const name = content.trim().slice(0, 100);
     await prisma.user.update({ where: { id: userId }, data: { name } });
     const nextStep = await getCurrentStep(userId);
-    result = { reply: questionForStep(nextStep), extracted: { name } };
+    result = { reply: questionForStep(nextStep), extracted: { name }, nextStep };
   } else if (step === 'complete') {
     const wantsReport = /generar|reporte|listo/i.test(content);
     result = wantsReport
       ? {
           reply: 'Perfecto, genera tu reporte con POST /api/reports/:year/generate.',
           extracted: null,
+          nextStep: 'complete',
         }
-      : { reply: questionForStep('complete'), extracted: null };
+      : { reply: questionForStep('complete'), extracted: null, nextStep: 'complete' };
   } else {
     const taxYear = await getCurrentTaxYear();
     result = await handleTaxStep(userId, taxYear, step, content);
@@ -125,9 +147,10 @@ async function sendMessage(conversationId, userId, content) {
   return {
     reply: result.reply,
     step,
+    nextStep: result.nextStep || step,
     extracted: result.extracted,
     profileComplete: (result.nextStep || step) === 'complete',
   };
 }
 
-module.exports = { createConversation, getConversation, sendMessage };
+module.exports = { createConversation, getConversation, sendMessage, isNegativeZeroAnswer };

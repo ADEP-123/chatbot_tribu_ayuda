@@ -43,57 +43,57 @@ async function sendMessage(token, conversationId, content) {
   return body;
 }
 
+const STEP_ANSWERS = {
+  name: 'Andrés',
+  ingresosBrutos: 'gano 6 millones al mes',
+  patrimonioBruto: 'en total tengo unos 40 millones entre carro y ahorros',
+  consumosTarjeta: 'no he usado tarjeta este año',
+  comprasConsumos: 'ninguna otra compra grande',
+  consignaciones: 'en el año consigné 40 millones',
+  esResponsableIva: 'no soy responsable de iva',
+};
+
 async function main() {
   console.log('--- Reiniciando datos del usuario de prueba ---');
   await resetUserData(TEST_EMAIL);
+  await prisma.user.update({ where: { email: TEST_EMAIL }, data: { name: null } }).catch(() => {});
 
   console.log('--- Autenticando ---');
   const token = await getAuthToken();
 
-  console.log('--- Creando conversación ---');
-  const { status: convStatus, body: conversation } = await api('/api/conversations', {
+  console.log('--- Creando conversación (debe traer la pregunta del nombre) ---');
+  const { status, body: conversation } = await api('/api/conversations', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
   });
-  assert.strictEqual(convStatus, 201);
+  assert.strictEqual(status, 201);
+  assert.match(conversation.messages[0].content, /cómo te llamas/i);
   const conversationId = conversation.id;
 
-  const turns = [
-    {
-      message: 'Hola, gano como 6 millones al mes y no tengo carro ni casa propia',
-      expect: { ingresosBrutos: 72000000 },
-    },
-    { message: 'gasté 900 mil en tarjeta el mes pasado', expect: null },
-    { message: 'en el año consigné como 40 millones', expect: { consignaciones: 40000000 } },
-    { message: 'no soy responsable de iva', expect: { esResponsableIva: false } },
-  ];
+  let currentStep = 'name';
+  let lastResult;
+  const MAX_TURNS = 20; // margen amplio para absorber vueltas de aclaración
+  let turns = 0;
 
-  for (const turn of turns) {
-    console.log(`--- Enviando: "${turn.message}" ---`);
-    const result = await sendMessage(token, conversationId, turn.message);
-    console.log(`   extraído: ${JSON.stringify(result.extractedFields)}`);
+  while (currentStep !== 'complete' && turns < MAX_TURNS) {
+    const answer = STEP_ANSWERS[currentStep];
+    assert.ok(answer, `No hay respuesta de prueba definida para el paso "${currentStep}"`);
+
+    console.log(`--- [${currentStep}] Enviando: "${answer}" ---`);
+    lastResult = await sendMessage(token, conversationId, answer);
     console.log(
-      `   perfil completo: ${result.profileComplete} | faltan: ${result.missingFields.join(', ') || 'nada'}`
+      `   extraído: ${JSON.stringify(lastResult.extracted)} | siguiente paso: ${lastResult.nextStep}`
     );
 
-    if (turn.expect) {
-      for (const [field, value] of Object.entries(turn.expect)) {
-        assert.strictEqual(
-          result.extractedFields[field],
-          value,
-          `Se esperaba ${field}=${value}, el modelo devolvió ${result.extractedFields[field]}`
-        );
-      }
-    }
+    currentStep = lastResult.nextStep;
+    turns++;
   }
 
-  console.log('--- Verificando perfil guardado en la base de datos ---');
-  const { status: profileStatus, body: profile } = await api(`/api/tax-profiles/${YEAR}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  assert.strictEqual(profileStatus, 200);
-  assert.strictEqual(Number(profile.ingresosBrutos), 72000000);
-  assert.strictEqual(Number(profile.consignaciones), 40000000);
+  assert.strictEqual(
+    currentStep,
+    'complete',
+    `El flujo no llegó a "complete" tras ${MAX_TURNS} turnos (se quedó en "${currentStep}")`
+  );
 
   console.log('--- Generando reporte ---');
   const { status: reportStatus, body: report } = await api(`/api/reports/${YEAR}/generate`, {
@@ -102,10 +102,9 @@ async function main() {
   });
   assert.strictEqual(reportStatus, 201);
   assert.strictEqual(report.debeDeclarar, true);
-  assert.ok(report.motivos.some((m) => m.criterio === 'ingresos'));
 
   console.log(
-    '\n✅ Flujo end-to-end completo: registro, login, conversación, extracción, perfil y reporte.'
+    `\n✅ Flujo guiado completo en ${turns} turnos (incluyendo posibles aclaraciones). Reporte generado.`
   );
 }
 

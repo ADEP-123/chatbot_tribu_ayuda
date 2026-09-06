@@ -129,14 +129,29 @@ async function callOllama(systemPrompt, userMessage, tool) {
   return res.json();
 }
 
+const TYPE_EXAMPLES = {
+  money:
+    '\nEjemplos: "6 millones al mes" → esSuficiente true, monto 6000000, periodicidad mensual. ' +
+    '"no he tenido/gastado/usado eso" o "nada" → esSuficiente true, monto 0. ' +
+    '"no sé cuánto" → esSuficiente false.',
+  money_single:
+    '\nEjemplos: "unos 40 millones en total" → esSuficiente true, monto 40000000. ' +
+    '"no tengo bienes" o "nada" → esSuficiente true, monto 0. ' +
+    '"no tengo idea" → esSuficiente false.',
+  boolean:
+    '\nEjemplos: "no soy responsable de iva" → esSuficiente true, valor false. ' +
+    '"sí, facturo con iva" → esSuficiente true, valor true. ' +
+    '"no sé qué es eso" → esSuficiente false.',
+};
+
 async function extractStepAnswer(step, userMessage) {
   const systemPrompt = `Analiza la respuesta del usuario a esta pregunta que se le hizo: "${step.question}"
 
 Reglas:
 - Convierte expresiones coloquiales a su valor numérico completo: "6 millones" = 6000000, "800 mil" = 800000, "1.2 millones" = 1200000.
-- Si el usuario da una cifra clara (preguntas de dinero) o un sí/no claro (preguntas de sí o no), esSuficiente SIEMPRE debe ser true, aunque la cifra sea aproximada.
+- Si el usuario da una cifra clara, un "no tengo/nada" (que significa 0), o un sí/no claro, esSuficiente SIEMPRE debe ser true.
 - Solo marca esSuficiente en false si el usuario realmente no dio ninguna respuesta utilizable (ej. "no sé", "no tengo idea").
-- Nunca inventes un valor que el usuario no haya dado.
+- Nunca inventes un valor que el usuario no haya dado.${TYPE_EXAMPLES[step.type] || ''}
 
 Llama siempre a record_answer con tu análisis.`;
 
