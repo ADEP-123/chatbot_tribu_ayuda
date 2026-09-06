@@ -6,6 +6,7 @@ const authRoutes = require('./src/routes/auth.routes');
 const taxYearRoutes = require('./src/routes/taxYear.routes');
 const taxProfileRoutes = require('./src/routes/taxProfile.routes');
 const conversationRoutes = require('./src/routes/conversation.routes');
+const reportRoutes = require('./src/routes/report.routes');
 
 const app = express();
 app.use(cors());
@@ -16,6 +17,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/tax-years', taxYearRoutes);
 app.use('/api/tax-profiles', taxProfileRoutes);
 app.use('/api/conversations', conversationRoutes);
+app.use('/api/reports', reportRoutes);
 
 app.use((err, req, res, next) => {
   console.error(err);

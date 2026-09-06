@@ -46,44 +46,54 @@ async function sendMessage(token, conversationId, content) {
 async function main() {
   console.log('--- Reiniciando datos del usuario de prueba ---');
   await resetUserData(TEST_EMAIL);
-  await prisma.user.update({ where: { email: TEST_EMAIL }, data: { name: null } }).catch(() => {});
 
   console.log('--- Autenticando ---');
   const token = await getAuthToken();
 
-  console.log('--- Creando conversación (debe traer la pregunta del nombre) ---');
-  const { status, body: conversation } = await api('/api/conversations', {
+  console.log('--- Creando conversación ---');
+  const { status: convStatus, body: conversation } = await api('/api/conversations', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
   });
-  assert.strictEqual(status, 201);
-  assert.match(conversation.messages[0].content, /cómo te llamas/i);
+  assert.strictEqual(convStatus, 201);
   const conversationId = conversation.id;
 
-  const answers = [
-    'Andrés',
-    'gano 6 millones al mes',
-    'en total tengo unos 40 millones entre carro y ahorros',
-    'no he usado tarjeta este año',
-    'ninguna otra compra grande',
-    'en el año consigné 40 millones',
-    'no soy responsable de iva',
+  const turns = [
+    {
+      message: 'Hola, gano como 6 millones al mes y no tengo carro ni casa propia',
+      expect: { ingresosBrutos: 72000000 },
+    },
+    { message: 'gasté 900 mil en tarjeta el mes pasado', expect: null },
+    { message: 'en el año consigné como 40 millones', expect: { consignaciones: 40000000 } },
+    { message: 'no soy responsable de iva', expect: { esResponsableIva: false } },
   ];
 
-  let lastResult;
-  for (const answer of answers) {
-    console.log(`--- Enviando: "${answer}" ---`);
-    lastResult = await sendMessage(token, conversationId, answer);
+  for (const turn of turns) {
+    console.log(`--- Enviando: "${turn.message}" ---`);
+    const result = await sendMessage(token, conversationId, turn.message);
+    console.log(`   extraído: ${JSON.stringify(result.extractedFields)}`);
     console.log(
-      `   step: ${lastResult.step} | extraído: ${JSON.stringify(lastResult.extracted)} | completo: ${lastResult.profileComplete}`
+      `   perfil completo: ${result.profileComplete} | faltan: ${result.missingFields.join(', ') || 'nada'}`
     );
+
+    if (turn.expect) {
+      for (const [field, value] of Object.entries(turn.expect)) {
+        assert.strictEqual(
+          result.extractedFields[field],
+          value,
+          `Se esperaba ${field}=${value}, el modelo devolvió ${result.extractedFields[field]}`
+        );
+      }
+    }
   }
 
-  assert.strictEqual(
-    lastResult.profileComplete,
-    true,
-    'El perfil debería estar completo tras responder todo el flujo'
-  );
+  console.log('--- Verificando perfil guardado en la base de datos ---');
+  const { status: profileStatus, body: profile } = await api(`/api/tax-profiles/${YEAR}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.strictEqual(profileStatus, 200);
+  assert.strictEqual(Number(profile.ingresosBrutos), 72000000);
+  assert.strictEqual(Number(profile.consignaciones), 40000000);
 
   console.log('--- Generando reporte ---');
   const { status: reportStatus, body: report } = await api(`/api/reports/${YEAR}/generate`, {
@@ -92,8 +102,11 @@ async function main() {
   });
   assert.strictEqual(reportStatus, 201);
   assert.strictEqual(report.debeDeclarar, true);
+  assert.ok(report.motivos.some((m) => m.criterio === 'ingresos'));
 
-  console.log('\n✅ Flujo guiado completo: nombre, 6 preguntas y reporte generado.');
+  console.log(
+    '\n✅ Flujo end-to-end completo: registro, login, conversación, extracción, perfil y reporte.'
+  );
 }
 
 main()
