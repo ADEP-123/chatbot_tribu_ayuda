@@ -17,8 +17,12 @@ services:
       dockerfile: Dockerfile.dev
     depends_on:
       - db
+      - ollama
     environment:
       DATABASE_URL: postgresql://taxbot:taxbot_dev@db:5432/taxbot_db
+      JWT_SECRET: cambia-esto-por-una-cadena-larga-y-aleatoria
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: llama3.1:8b
       PORT: 4000
     ports:
       - "4000:4000"
@@ -40,5 +44,13 @@ services:
       - /app/node_modules
     command: npm run dev -- --host
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
 volumes:
   pgdata:
+  ollama_data:

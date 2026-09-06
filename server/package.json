@@ -6,7 +6,9 @@
   "scripts": {
     "lint": "eslint .",
     "dev": "nodemon index.js",
-    "test": "node --test src/services"
+    "test": "node --test src/services",
+    "reset:test": "node prisma/resetTestUser.js",
+    "test:extraction": "node scripts/testExtraction.js"
   },
   "keywords": [],
   "author": "",
