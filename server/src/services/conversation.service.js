@@ -1,13 +1,21 @@
 const prisma = require('../db');
 const { NAME_QUESTION, FLOW_STEPS, FLOW_ORDER } = require('./flow');
-const { extractStepAnswer } = require('./stepExtractor.service');
+const { extractStepAnswer, interpretCorrection, FIELD_LABELS } = require('./stepExtractor.service');
 const taxProfileService = require('./taxProfile.service');
 
 const NEGATIVE_ZERO_PATTERN =
   /\b(no\s+(he|tengo|tuve|gast[eé]|us[eé]|consign[eé]|recib[ií])|nada|ninguno|ninguna|\bcero\b)/i;
+const SIMPLE_YES_PATTERN = /^\s*s[ií]!?\.?\s*$/i;
+const SIMPLE_NO_PATTERN = /^\s*no!?\.?\s*$/i;
 
 function isNegativeZeroAnswer(content) {
   return NEGATIVE_ZERO_PATTERN.test(content) && !/\d/.test(content);
+}
+
+function isSimpleYesNo(content) {
+  if (SIMPLE_YES_PATTERN.test(content)) return true;
+  if (SIMPLE_NO_PATTERN.test(content)) return false;
+  return undefined;
 }
 
 async function getCurrentTaxYear() {
@@ -64,6 +72,14 @@ async function getConversation(id, userId) {
   return conversation;
 }
 
+function getConversationsForUser(userId) {
+  return prisma.conversation.findMany({
+    where: { userId },
+    orderBy: { createdAt: 'desc' },
+    include: { messages: { orderBy: { createdAt: 'asc' } } },
+  });
+}
+
 function annualizeMoney(result) {
   if (!Number.isFinite(result.monto) || result.monto < 0) return null;
   return result.periodicidad === 'mensual' ? result.monto * 12 : result.monto;
@@ -72,9 +88,18 @@ function annualizeMoney(result) {
 async function handleTaxStep(userId, taxYear, step, content) {
   const stepDef = FLOW_STEPS[step];
 
-  // Atajo determinista: si el usuario niega tener el rubro sin dar ninguna cifra,
-  // lo tratamos como 0 directamente — más confiable que depender de que el modelo
-  // reconozca la negación en cada intento, sobre todo en preguntas de dinero.
+  // Atajo determinista para sí/no simples — evita depender del modelo en el caso
+  // más trivial posible, que hemos visto fallar de forma repetida y consistente.
+  if (stepDef.type === 'boolean') {
+    const simple = isSimpleYesNo(content);
+    if (simple !== undefined) {
+      await taxProfileService.upsertProfile(userId, taxYear.year, { [step]: simple });
+      const nextStep = await getCurrentStep(userId);
+      return { reply: questionForStep(nextStep), extracted: { [step]: simple }, nextStep };
+    }
+  }
+
+  // Atajo determinista para negaciones de montos ("no he usado tarjeta") — mismo principio.
   if (
     (stepDef.type === 'money' || stepDef.type === 'money_single') &&
     isNegativeZeroAnswer(content)
@@ -109,6 +134,49 @@ async function handleTaxStep(userId, taxYear, step, content) {
   return { reply: questionForStep(nextStep), extracted: { [step]: value }, nextStep };
 }
 
+async function handleCompleteStep(userId, taxYear, content) {
+  const wantsReport = /generar|reporte/i.test(content);
+  if (wantsReport) {
+    return {
+      reply:
+        'Perfecto, dale clic al botón "Generar mi reporte" que aparece arriba del chat para verlo.',
+      extracted: null,
+      nextStep: 'complete',
+    };
+  }
+
+  const correction = await interpretCorrection(content);
+
+  if (!correction.esCorreccion || !correction.campo || !FLOW_STEPS[correction.campo]) {
+    return { reply: questionForStep('complete'), extracted: null, nextStep: 'complete' };
+  }
+
+  const stepDef = FLOW_STEPS[correction.campo];
+  let value;
+  if (stepDef.type === 'boolean') {
+    value = typeof correction.valorBooleano === 'boolean' ? correction.valorBooleano : null;
+  } else if (stepDef.type === 'money_single') {
+    value = Number.isFinite(correction.monto) && correction.monto >= 0 ? correction.monto : null;
+  } else {
+    value = annualizeMoney(correction);
+  }
+
+  if (value === null || value === undefined) {
+    return {
+      reply: 'No logré identificar el nuevo valor. ¿Puedes darlo de nuevo, con una cifra concreta?',
+      extracted: null,
+      nextStep: 'complete',
+    };
+  }
+
+  await taxProfileService.upsertProfile(userId, taxYear.year, { [correction.campo]: value });
+  return {
+    reply: `Listo, actualicé "${FIELD_LABELS[correction.campo]}". ¿Quieres corregir algo más, o generamos el reporte?`,
+    extracted: { [correction.campo]: value },
+    nextStep: 'complete',
+  };
+}
+
 async function sendMessage(conversationId, userId, content) {
   await getConversation(conversationId, userId); // valida pertenencia
   await prisma.message.create({ data: { conversationId, role: 'user', content } });
@@ -122,14 +190,8 @@ async function sendMessage(conversationId, userId, content) {
     const nextStep = await getCurrentStep(userId);
     result = { reply: questionForStep(nextStep), extracted: { name }, nextStep };
   } else if (step === 'complete') {
-    const wantsReport = /generar|reporte|listo/i.test(content);
-    result = wantsReport
-      ? {
-          reply: 'Perfecto, genera tu reporte con POST /api/reports/:year/generate.',
-          extracted: null,
-          nextStep: 'complete',
-        }
-      : { reply: questionForStep('complete'), extracted: null, nextStep: 'complete' };
+    const taxYear = await getCurrentTaxYear();
+    result = await handleCompleteStep(userId, taxYear, content);
   } else {
     const taxYear = await getCurrentTaxYear();
     result = await handleTaxStep(userId, taxYear, step, content);
@@ -153,4 +215,22 @@ async function sendMessage(conversationId, userId, content) {
   };
 }
 
-module.exports = { createConversation, getConversation, sendMessage, isNegativeZeroAnswer };
+async function deleteConversation(id, userId) {
+  const conversation = await prisma.conversation.findFirst({ where: { id, userId } });
+  if (!conversation) {
+    const error = new Error('Conversación no encontrada');
+    error.status = 404;
+    throw error;
+  }
+  await prisma.conversation.delete({ where: { id } });
+}
+
+module.exports = {
+  createConversation,
+  getConversation,
+  getConversationsForUser,
+  sendMessage,
+  isNegativeZeroAnswer,
+  isSimpleYesNo,
+  deleteConversation,
+};

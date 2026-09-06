@@ -42,4 +42,13 @@ async function getObligation(req, res, next) {
   }
 }
 
-module.exports = { upsertProfile, getProfile, getObligation };
+async function reset(req, res, next) {
+  try {
+    await taxProfileService.resetProfile(req.user.userId, req.params.year);
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { upsertProfile, getProfile, getObligation, reset };

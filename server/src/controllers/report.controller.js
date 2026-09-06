@@ -25,5 +25,13 @@ async function getOne(req, res, next) {
     next(err);
   }
 }
+async function remove(req, res, next) {
+  try {
+    await reportService.deleteReport(req.params.id, req.user.userId);
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+}
 
-module.exports = { generate, getAll, getOne };
+module.exports = { generate, getAll, getOne, remove };
