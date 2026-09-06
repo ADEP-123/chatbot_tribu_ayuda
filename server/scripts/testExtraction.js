@@ -23,6 +23,12 @@ const cases = [
     message: 'Dame el total exacto del año',
     expectField: null,
   },
+  {
+    label: 'Respuesta booleana sin cifras',
+    message: 'no soy responsable de iva',
+    expectField: 'esResponsableIva',
+    expectValue: false,
+  },
 ];
 
 async function main() {

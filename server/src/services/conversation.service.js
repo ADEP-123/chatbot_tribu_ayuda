@@ -37,15 +37,20 @@ async function sendMessage(conversationId, userId, content) {
   await prisma.message.create({ data: { conversationId, role: 'user', content } });
 
   const knownProfile = (await taxProfileService.getProfile(userId, taxYear.year)) || {};
+  const missingFields = taxProfileService.getMissingFields(knownProfile);
   const history = conversation.messages.map((m) => ({ role: m.role, content: m.content }));
   history.push({ role: 'user', content });
 
-  const { reply, extractedFields } = await llmService.runTurn({ history, knownProfile });
-
+  const { reply, extractedFields } = await llmService.runTurn({
+    history,
+    knownProfile,
+    missingFields,
+  });
   const safeFields = filterSuspiciousChanges(extractedFields, knownProfile);
 
+  let updatedProfile = knownProfile;
   if (Object.keys(safeFields).length > 0) {
-    await taxProfileService.upsertProfile(userId, taxYear.year, safeFields);
+    updatedProfile = await taxProfileService.upsertProfile(userId, taxYear.year, safeFields);
   }
 
   await prisma.message.create({
@@ -53,11 +58,18 @@ async function sendMessage(conversationId, userId, content) {
       conversationId,
       role: 'assistant',
       content: reply,
-      extractedData: Object.keys(extractedFields).length ? extractedFields : undefined,
+      extractedData: Object.keys(safeFields).length ? safeFields : undefined,
     },
   });
 
-  return { reply, extractedFields: safeFields };
+  const remainingMissing = taxProfileService.getMissingFields(updatedProfile);
+
+  return {
+    reply,
+    extractedFields: safeFields,
+    profileComplete: remainingMissing.length === 0,
+    missingFields: remainingMissing.map((f) => f.label),
+  };
 }
 
 module.exports = { createConversation, getConversation, sendMessage };

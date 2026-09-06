@@ -91,19 +91,23 @@ function annualize(monto, periodicidad) {
 
 function normalizeToolArgs(rawArgs, userMessage = '') {
   const normalized = {};
+  const hasDigit = /\d/.test(userMessage);
 
-  for (const [toolField, profileField] of Object.entries(PERIODIC_FIELD_MAP)) {
-    const value = rawArgs[toolField];
-    if (value && typeof value.monto === 'number') {
-      const annual = annualize(value.monto, value.periodicidad);
-      if (annual !== null) normalized[profileField] = annual;
+  // Los campos monetarios solo son válidos si el mensaje trae una cifra real si el modelo intenta enviarlos sin ningún número en el mensaje, es una alucinación.
+  if (hasDigit) {
+    for (const [toolField, profileField] of Object.entries(PERIODIC_FIELD_MAP)) {
+      const value = rawArgs[toolField];
+      if (value && typeof value.monto === 'number') {
+        const annual = annualize(value.monto, value.periodicidad);
+        if (annual !== null) normalized[profileField] = annual;
+      }
+    }
+    if (typeof rawArgs.patrimonioBruto === 'number') {
+      normalized.patrimonioBruto = rawArgs.patrimonioBruto;
     }
   }
 
-  if (typeof rawArgs.patrimonioBruto === 'number') {
-    normalized.patrimonioBruto = rawArgs.patrimonioBruto;
-  }
-
+  // Este campo es booleano, nunca necesita un dígito para ser válido solo exige que el usuario haya mencionado la palabra "iva" explícitamente.
   if (typeof rawArgs.esResponsableIva === 'boolean' && /iva/i.test(userMessage)) {
     normalized.esResponsableIva = rawArgs.esResponsableIva;
   }
@@ -124,7 +128,7 @@ function formatMoney(v) {
   return `$${Number(v).toLocaleString('es-CO')}`;
 }
 
-function buildSystemPrompt(knownProfile = {}) {
+function buildSystemPrompt(knownProfile = {}, missingFields = []) {
   const campo = (v) => (v === null || v === undefined ? 'no proporcionado' : formatMoney(v));
   const iva =
     knownProfile.esResponsableIva === undefined || knownProfile.esResponsableIva === null
@@ -133,22 +137,26 @@ function buildSystemPrompt(knownProfile = {}) {
         ? 'sí'
         : 'no';
 
+  const seccionCompletitud =
+    missingFields.length === 0
+      ? '\nYa tienes todos los datos necesarios para este año. Coméntaselo al usuario y pregúntale si quiere agregar o corregir algo más, o si prefiere generar ya su reporte de declaración de renta.'
+      : `\nAún faltan estos datos por confirmar: ${missingFields.map((f) => f.label).join(', ')}. Cuando la conversación lo permita naturalmente, pregúntalos — de a uno o dos por turno, sin interrogar de golpe — para que el usuario no olvide mencionarlos.`;
+
   return `Eres un asistente tributario colombiano que ayuda a una persona natural a reunir la información necesaria para saber si debe declarar renta.
 
 Reglas:
 - Haz preguntas naturales, una o dos a la vez, en tono cercano y sin jerga legal innecesaria.
 - SOLO llama a update_tax_profile con datos que el usuario mencionó EXPLÍCITAMENTE en su último mensaje.
-- NUNCA vuelvas a enviar un campo que ya aparece en "Datos que ya conoces" — ya está guardado, no lo repitas ni lo recalcules, así el usuario no lo mencione otra vez.
-- NUNCA envíes un valor de 0 o false a menos que el usuario lo haya dicho explícitamente (ej. "no tengo tarjeta", "no soy responsable de IVA"). Si no sabes un dato, simplemente no lo incluyas.
+- NUNCA vuelvas a enviar un campo que ya aparece en "Datos que ya conoces" — ya está guardado, no lo repitas ni lo recalcules.
+- NUNCA envíes un valor de 0 o false a menos que el usuario lo haya dicho explícitamente. Si no sabes un dato, no lo incluyas.
 - Nunca calcules tú si debe declarar o no, ni des cifras de topes — eso lo hace un sistema aparte con los datos exactos.
-- Si el usuario no sabe un dato exacto, ayúdalo con preguntas simples para estimarlo.
-- Si el usuario menciona el monto de un solo mes puntual (periodicidad "mes_especifico"), en tu respuesta pregúntale explícitamente si ese mes fue representativo del resto del año, o si prefiere darte el total exacto del año — no asumas ninguna de las dos cosas.
+- Si el usuario menciona el monto de un solo mes puntual (periodicidad "mes_especifico"), pregúntale si fue representativo del resto del año o si prefiere darte el total exacto — no asumas ninguna de las dos cosas.
 
 Ejemplos de cómo clasificar la periodicidad:
-- "gano 6 millones al mes" → periodicidad "mensual_promedio"
-- "el mes pasado gasté 900 mil en tarjeta" → periodicidad "mes_especifico"
-- "en el año consigné 40 millones" → periodicidad "anual"
-- "dame tú el total" o "calcúlalo" → NO llames a la herramienta, no hay ninguna cifra nueva; pide el monto exacto de nuevo.
+- "gano 6 millones al mes" → "mensual_promedio"
+- "el mes pasado gasté 900 mil en tarjeta" → "mes_especifico"
+- "en el año consigné 40 millones" → "anual"
+- "dame tú el total" o "calcúlalo" → NO llames a la herramienta, pide el monto exacto de nuevo.
 
 Datos que ya conoces de este usuario (NO los reenvíes, solo son contexto):
 - Ingresos brutos: ${campo(knownProfile.ingresosBrutos)}
@@ -156,7 +164,8 @@ Datos que ya conoces de este usuario (NO los reenvíes, solo son contexto):
 - Consumos con tarjeta: ${campo(knownProfile.consumosTarjeta)}
 - Compras y consumos: ${campo(knownProfile.comprasConsumos)}
 - Consignaciones: ${campo(knownProfile.consignaciones)}
-- Responsable de IVA: ${iva}`;
+- Responsable de IVA: ${iva}
+${seccionCompletitud}`;
 }
 
 async function callOllama(messages) {
@@ -177,30 +186,18 @@ async function callOllama(messages) {
   return res.json();
 }
 
-async function runTurn({ history, knownProfile = {} }) {
-  const messages = [{ role: 'system', content: buildSystemPrompt(knownProfile) }, ...history];
+async function runTurn({ history, knownProfile = {}, missingFields = [] }) {
+  const messages = [
+    { role: 'system', content: buildSystemPrompt(knownProfile, missingFields) },
+    ...history,
+  ];
   const extractedFields = {};
   const MAX_ITER = 5;
 
   const lastUserMessage = [...history].reverse().find((m) => m.role === 'user')?.content || '';
-  const userMessageHasDigit = /\d/.test(lastUserMessage);
 
   for (let i = 0; i < MAX_ITER; i++) {
     const { message } = await callOllama(messages);
-
-    // Ningún dato tributario real llega en un mensaje sin cifras — si el modelo
-    // intenta extraer algo de todos modos, es una alucinación y la descartamos.
-    if (message.tool_calls?.length && !userMessageHasDigit) {
-      console.warn(
-        '[llm.service] El modelo intentó registrar datos de un mensaje sin cifras numéricas — se ignora.'
-      );
-      return {
-        reply:
-          message.content ||
-          'Para registrar ese dato necesito una cifra concreta en pesos. ¿Me la puedes dar?',
-        extractedFields,
-      };
-    }
 
     if (!message.tool_calls || message.tool_calls.length === 0) {
       return { reply: message.content, extractedFields };
