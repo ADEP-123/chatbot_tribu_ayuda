@@ -61,7 +61,18 @@ export function ReportPage() {
             </ul>
           )}
         </section>
-
+        {report.debeDeclarar && report.montoEstimado != null && (
+          <section className="report-section report-estimate">
+            <h2>Estimación aproximada del impuesto</h2>
+            <p className="report-estimate-amount">{formatMoney(report.montoEstimado)}</p>
+            <p className="report-estimate-note">
+              Esta cifra aplica la tarifa progresiva del Artículo 241 del Estatuto Tributario
+              directamente sobre tus ingresos brutos, sin restar deducciones, rentas exentas ni
+              retenciones ya practicadas <b>(el valor real a pagar casi siempre es menor)</b>.
+              Consulta a un contador para el cálculo exacto.
+            </p>
+          </section>
+        )}
         {report.camposFaltantes?.length > 0 && (
           <section className="report-section report-warning">
             <h2>Ten en cuenta</h2>
