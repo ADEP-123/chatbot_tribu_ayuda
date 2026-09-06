@@ -1,7 +1,14 @@
 const prisma = require('../db');
-const llmService = require('./llm.service');
+const { NAME_QUESTION, FLOW_STEPS, FLOW_ORDER } = require('./flow');
+const { extractStepAnswer } = require('./stepExtractor.service');
 const taxProfileService = require('./taxProfile.service');
-const { filterSuspiciousChanges } = require('../utils/profileGuards');
+
+const NEGATIVE_ZERO_PATTERN =
+  /\b(no\s+(he|tengo|tuve|gast[eé]|us[eé]|consign[eé]|recib[ií])|nada|ninguno|ninguna|\bcero\b)/i;
+
+function isNegativeZeroAnswer(content) {
+  return NEGATIVE_ZERO_PATTERN.test(content) && !/\d/.test(content);
+}
 
 async function getCurrentTaxYear() {
   const taxYear = await prisma.taxYear.findFirst({ orderBy: { year: 'desc' } });
@@ -13,8 +20,35 @@ async function getCurrentTaxYear() {
   return taxYear;
 }
 
-function createConversation(userId) {
-  return prisma.conversation.create({ data: { userId } });
+async function getCurrentStep(userId) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user.name) return 'name';
+
+  const taxYear = await getCurrentTaxYear();
+  const profile = await taxProfileService.getProfile(userId, taxYear.year);
+  const missing = taxProfileService.getMissingFields(profile);
+  const nextField = FLOW_ORDER.find((field) => missing.some((m) => m.field === field));
+
+  return nextField || 'complete';
+}
+
+function questionForStep(step) {
+  if (step === 'name') return NAME_QUESTION;
+  if (step === 'complete') {
+    return '¡Listo! Ya tengo todo lo que necesito. ¿Quieres agregar o corregir algo, o generamos tu reporte? (escribe "generar reporte" cuando estés listo)';
+  }
+  return FLOW_STEPS[step].question;
+}
+
+async function createConversation(userId) {
+  const conversation = await prisma.conversation.create({ data: { userId } });
+  const step = await getCurrentStep(userId);
+
+  await prisma.message.create({
+    data: { conversationId: conversation.id, role: 'assistant', content: questionForStep(step) },
+  });
+
+  return getConversation(conversation.id, userId);
 }
 
 async function getConversation(id, userId) {
@@ -30,34 +64,93 @@ async function getConversation(id, userId) {
   return conversation;
 }
 
-async function sendMessage(conversationId, userId, content) {
-  const conversation = await getConversation(conversationId, userId);
-  const taxYear = await getCurrentTaxYear();
+function annualizeMoney(result) {
+  if (!Number.isFinite(result.monto) || result.monto < 0) return null;
+  return result.periodicidad === 'mensual' ? result.monto * 12 : result.monto;
+}
 
+async function handleTaxStep(userId, taxYear, step, content) {
+  const stepDef = FLOW_STEPS[step];
+
+  // Atajo determinista: si el usuario niega tener el rubro sin dar ninguna cifra,
+  // lo tratamos como 0 directamente — más confiable que depender de que el modelo
+  // reconozca la negación en cada intento, sobre todo en preguntas de dinero.
+  if (
+    (stepDef.type === 'money' || stepDef.type === 'money_single') &&
+    isNegativeZeroAnswer(content)
+  ) {
+    await taxProfileService.upsertProfile(userId, taxYear.year, { [step]: 0 });
+    const nextStep = await getCurrentStep(userId);
+    return { reply: questionForStep(nextStep), extracted: { [step]: 0 }, nextStep };
+  }
+
+  const result = await extractStepAnswer(stepDef, content);
+
+  if (!result.esSuficiente) {
+    return { reply: stepDef.clarification, extracted: null };
+  }
+
+  let value;
+  if (stepDef.type === 'boolean') {
+    value = typeof result.valor === 'boolean' ? result.valor : null;
+  } else if (stepDef.type === 'money_single') {
+    value = Number.isFinite(result.monto) && result.monto >= 0 ? result.monto : null;
+  } else {
+    value = annualizeMoney(result);
+  }
+
+  if (value === null) {
+    return { reply: stepDef.clarification, extracted: null };
+  }
+
+  await taxProfileService.upsertProfile(userId, taxYear.year, { [step]: value });
+  const nextStep = await getCurrentStep(userId);
+
+  return { reply: questionForStep(nextStep), extracted: { [step]: value }, nextStep };
+}
+
+async function sendMessage(conversationId, userId, content) {
+  await getConversation(conversationId, userId); // valida pertenencia
   await prisma.message.create({ data: { conversationId, role: 'user', content } });
 
-  const knownProfile = (await taxProfileService.getProfile(userId, taxYear.year)) || {};
-  const history = conversation.messages.map((m) => ({ role: m.role, content: m.content }));
-  history.push({ role: 'user', content });
+  const step = await getCurrentStep(userId);
+  let result;
 
-  const { reply, extractedFields } = await llmService.runTurn({ history, knownProfile });
-
-  const safeFields = filterSuspiciousChanges(extractedFields, knownProfile);
-
-  if (Object.keys(safeFields).length > 0) {
-    await taxProfileService.upsertProfile(userId, taxYear.year, safeFields);
+  if (step === 'name') {
+    const name = content.trim().slice(0, 100);
+    await prisma.user.update({ where: { id: userId }, data: { name } });
+    const nextStep = await getCurrentStep(userId);
+    result = { reply: questionForStep(nextStep), extracted: { name }, nextStep };
+  } else if (step === 'complete') {
+    const wantsReport = /generar|reporte|listo/i.test(content);
+    result = wantsReport
+      ? {
+          reply: 'Perfecto, genera tu reporte con POST /api/reports/:year/generate.',
+          extracted: null,
+          nextStep: 'complete',
+        }
+      : { reply: questionForStep('complete'), extracted: null, nextStep: 'complete' };
+  } else {
+    const taxYear = await getCurrentTaxYear();
+    result = await handleTaxStep(userId, taxYear, step, content);
   }
 
   await prisma.message.create({
     data: {
       conversationId,
       role: 'assistant',
-      content: reply,
-      extractedData: Object.keys(extractedFields).length ? extractedFields : undefined,
+      content: result.reply,
+      extractedData: result.extracted || undefined,
     },
   });
 
-  return { reply, extractedFields: safeFields };
+  return {
+    reply: result.reply,
+    step,
+    nextStep: result.nextStep || step,
+    extracted: result.extracted,
+    profileComplete: (result.nextStep || step) === 'complete',
+  };
 }
 
-module.exports = { createConversation, getConversation, sendMessage };
+module.exports = { createConversation, getConversation, sendMessage, isNegativeZeroAnswer };

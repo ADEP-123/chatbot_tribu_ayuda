@@ -53,16 +53,17 @@ model TaxProfile {
   userId              String
   taxYear             TaxYear  @relation(fields: [taxYearId], references: [id])
   taxYearId           String
-  ingresosBrutos      Decimal  @default(0)
-  patrimonioBruto     Decimal  @default(0)
-  consumosTarjeta     Decimal  @default(0)
-  comprasConsumos     Decimal  @default(0)
-  consignaciones      Decimal  @default(0)
-  esResponsableIva    Boolean  @default(false)
+  ingresosBrutos      Decimal?
+  patrimonioBruto     Decimal?
+  consumosTarjeta     Decimal?
+  comprasConsumos     Decimal?
+  consignaciones      Decimal?
+  esResponsableIva    Boolean?
   ultimosDigitosNit   String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   reports             Report[]
+
   @@unique([userId, taxYearId])
 }
 
@@ -93,7 +94,8 @@ model Report {
   taxProfile      TaxProfile @relation(fields: [taxProfileId], references: [id])
   taxProfileId    String
   debeDeclarar    Boolean
-  motivos         Json       // array de topes superados, ej. ["patrimonio", "consignaciones"]
+  motivos         Json
+  camposFaltantes Json?
   fechaLimite     DateTime?
   montoEstimado   Decimal?
   generatedAt     DateTime   @default(now())

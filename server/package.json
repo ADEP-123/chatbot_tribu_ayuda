@@ -8,7 +8,8 @@
     "dev": "nodemon index.js",
     "test": "node --test src/services",
     "reset:test": "node prisma/resetTestUser.js",
-    "test:extraction": "node scripts/testExtraction.js"
+    "test:extraction": "node scripts/testExtraction.js",
+    "test:e2e": "node scripts/testE2E.js"
   },
   "keywords": [],
   "author": "",
