@@ -1,7 +1,12 @@
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 require('dotenv').config();
 
+const { validateEnv } = require('./src/utils/validateEnv');
+validateEnv();
+
+const { apiLimiter } = require('./src/middlewares/rateLimit.middleware');
 const authRoutes = require('./src/routes/auth.routes');
 const taxYearRoutes = require('./src/routes/taxYear.routes');
 const taxProfileRoutes = require('./src/routes/taxProfile.routes');
@@ -9,8 +14,14 @@ const conversationRoutes = require('./src/routes/conversation.routes');
 const reportRoutes = require('./src/routes/report.routes');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+app.use(helmet());
+
+const allowedOrigins = (process.env.CLIENT_ORIGIN).split(',');
+app.use(cors({ origin: allowedOrigins, credentials: true }));
+
+app.use(express.json({ limit: '100kb' }));
+app.use(apiLimiter);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.use('/api/auth', authRoutes);

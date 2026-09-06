@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: taxbot_dev
       POSTGRES_DB: taxbot_db
     ports:
-      - "5432:5432"
+      - '5432:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
 
@@ -20,12 +20,13 @@ services:
       - ollama
     environment:
       DATABASE_URL: postgresql://taxbot:taxbot_dev@db:5432/taxbot_db
-      JWT_SECRET: cambia-esto-por-una-cadena-larga-y-aleatoria
+      JWT_SECRET: f1c3265d19e54c3fe7aa47efda4ad1e148a6f38b11eae7ca5a95121a67b5e1d524327c222623caddf1b70a0e7f1529e0
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_MODEL: llama3.1:8b
       PORT: 4000
+      CLIENT_ORIGIN: http://localhost:5173
     ports:
-      - "4000:4000"
+      - '4000:4000'
     volumes:
       - ./server:/app
       - /app/node_modules
@@ -38,7 +39,7 @@ services:
     depends_on:
       - server
     ports:
-      - "5173:5173"
+      - '5173:5173'
     volumes:
       - ./client:/app
       - /app/node_modules
@@ -47,7 +48,7 @@ services:
   ollama:
     image: ollama/ollama:latest
     ports:
-      - "11434:11434"
+      - '11434:11434'
     volumes:
       - ollama_data:/root/.ollama
 
