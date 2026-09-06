@@ -42,4 +42,14 @@ function getReportsForUser(userId) {
   return prisma.report.findMany({ where: { userId }, orderBy: { generatedAt: 'desc' } });
 }
 
-module.exports = { generateReport, getReport, getReportsForUser };
+async function deleteReport(id, userId) {
+  const report = await prisma.report.findFirst({ where: { id, userId } });
+  if (!report) {
+    const error = new Error('Reporte no encontrado');
+    error.status = 404;
+    throw error;
+  }
+  await prisma.report.delete({ where: { id } });
+}
+
+module.exports = { generateReport, getReport, getReportsForUser, deleteReport };

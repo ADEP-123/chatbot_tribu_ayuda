@@ -6,5 +6,7 @@ const router = express.Router();
 router.post('/', requireAuth, controller.create);
 router.get('/:id', requireAuth, controller.get);
 router.post('/:id/messages', requireAuth, controller.sendMessage);
+router.get('/', requireAuth, controller.getAll);
+router.delete('/:id', requireAuth, controller.remove);
 
 module.exports = router;

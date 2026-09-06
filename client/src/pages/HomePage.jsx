@@ -1,8 +1,10 @@
-import { Link } from 'react-router-dom';
+import { Navigate, Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 
 export function HomePage() {
   const { user } = useAuth();
+
+  if (user && !user.isAdmin) return <Navigate to="/chat" replace />;
 
   return (
     <div className="home">

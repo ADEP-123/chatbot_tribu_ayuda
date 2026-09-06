@@ -40,4 +40,10 @@ function getMissingFields(profile) {
   );
 }
 
-module.exports = { upsertProfile, getProfile, REQUIRED_FIELDS, getMissingFields };
+async function resetProfile(userId, year) {
+  const taxYear = await prisma.taxYear.findUnique({ where: { year: Number(year) } });
+  if (!taxYear) return;
+  await prisma.taxProfile.deleteMany({ where: { userId, taxYearId: taxYear.id } });
+}
+
+module.exports = { upsertProfile, getProfile, REQUIRED_FIELDS, getMissingFields, resetProfile };

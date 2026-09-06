@@ -76,6 +76,52 @@ const BOOLEAN_TOOL = {
   },
 };
 
+const FIELD_LABELS = {
+  ingresosBrutos: 'ingresos brutos del año',
+  patrimonioBruto: 'patrimonio bruto (bienes)',
+  consumosTarjeta: 'consumos con tarjeta de crédito',
+  comprasConsumos: 'compras y consumos totales',
+  consignaciones: 'consignaciones y depósitos',
+  esResponsableIva: 'si eres responsable de IVA',
+};
+
+const CORRECTION_TOOL = {
+  type: 'function',
+  function: {
+    name: 'record_correction',
+    description:
+      'Identifica si el usuario quiere corregir un dato ya registrado, y con qué nuevo valor.',
+    parameters: {
+      type: 'object',
+      properties: {
+        esCorreccion: {
+          type: 'boolean',
+          description: 'true si el mensaje pide corregir o cambiar un dato existente',
+        },
+        campo: {
+          type: 'string',
+          enum: Object.keys(FIELD_LABELS),
+          description: 'Cuál de los datos quiere corregir. Solo si esCorreccion es true.',
+        },
+        monto: {
+          type: 'number',
+          description: 'El nuevo valor en pesos, si el campo es monetario.',
+        },
+        periodicidad: {
+          type: 'string',
+          enum: ['anual', 'mensual'],
+          description: 'Si el monto es el total del año o un promedio mensual.',
+        },
+        valorBooleano: {
+          type: 'boolean',
+          description: 'El nuevo valor, solo si el campo es "si eres responsable de IVA".',
+        },
+      },
+      required: ['esCorreccion'],
+    },
+  },
+};
+
 function toolForType(type) {
   if (type === 'money') return MONEY_TOOL;
   if (type === 'money_single') return MONEY_SINGLE_TOOL;
@@ -83,8 +129,6 @@ function toolForType(type) {
   throw new Error(`Tipo de paso desconocido: ${type}`);
 }
 
-// Ollama a veces devuelve booleanos y números como strings ("false", "40000000")
-// en vez de tipos nativos — normalizamos siempre, sin asumir el tipo que llegó.
 function coerceBoolean(v) {
   if (typeof v === 'boolean') return v;
   if (typeof v === 'string') return v.trim().toLowerCase() === 'true';
@@ -98,14 +142,6 @@ function coerceNumber(v) {
     return Number.isFinite(n) ? n : undefined;
   }
   return undefined;
-}
-
-function normalizeResult(raw) {
-  const result = { esSuficiente: coerceBoolean(raw.esSuficiente) };
-  if (raw.monto !== undefined) result.monto = coerceNumber(raw.monto);
-  if (raw.periodicidad !== undefined) result.periodicidad = raw.periodicidad;
-  if (raw.valor !== undefined) result.valor = coerceBoolean(raw.valor);
-  return result;
 }
 
 async function callOllama(systemPrompt, userMessage, tool) {
@@ -144,6 +180,14 @@ const TYPE_EXAMPLES = {
     '"no sé qué es eso" → esSuficiente false.',
 };
 
+function normalizeResult(raw) {
+  const result = { esSuficiente: coerceBoolean(raw.esSuficiente) };
+  if (raw.monto !== undefined) result.monto = coerceNumber(raw.monto);
+  if (raw.periodicidad !== undefined) result.periodicidad = raw.periodicidad;
+  if (raw.valor !== undefined) result.valor = coerceBoolean(raw.valor);
+  return result;
+}
+
 async function extractStepAnswer(step, userMessage) {
   const systemPrompt = `Analiza la respuesta del usuario a esta pregunta que se le hizo: "${step.question}"
 
@@ -170,4 +214,35 @@ Llama siempre a record_answer con tu análisis.`;
   return normalizeResult(rawArgs);
 }
 
-module.exports = { extractStepAnswer };
+function normalizeCorrection(raw) {
+  const result = { esCorreccion: coerceBoolean(raw.esCorreccion) };
+  if (raw.campo !== undefined) result.campo = raw.campo;
+  if (raw.monto !== undefined) result.monto = coerceNumber(raw.monto);
+  if (raw.periodicidad !== undefined) result.periodicidad = raw.periodicidad;
+  if (raw.valorBooleano !== undefined) result.valorBooleano = coerceBoolean(raw.valorBooleano);
+  return result;
+}
+
+async function interpretCorrection(content) {
+  const systemPrompt = `El usuario ya completó un formulario tributario con estos datos: ${Object.values(FIELD_LABELS).join(', ')}.
+Analiza si su mensaje pide corregir alguno de esos datos y con qué nuevo valor.
+Convierte expresiones coloquiales a su valor numérico completo ("6 millones" = 6000000).
+Si el mensaje no pide ninguna corrección (ej. saluda, pregunta algo, o pide generar el reporte), esCorreccion debe ser false.
+Llama siempre a record_correction.`;
+
+  const { message } = await callOllama(systemPrompt, content, CORRECTION_TOOL);
+  const call = message.tool_calls?.[0];
+
+  if (!call || call.function.name !== 'record_correction') {
+    return { esCorreccion: false };
+  }
+
+  const rawArgs =
+    typeof call.function.arguments === 'string'
+      ? JSON.parse(call.function.arguments)
+      : call.function.arguments;
+
+  return normalizeCorrection(rawArgs);
+}
+
+module.exports = { extractStepAnswer, interpretCorrection, FIELD_LABELS };

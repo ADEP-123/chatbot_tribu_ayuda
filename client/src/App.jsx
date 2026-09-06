@@ -4,11 +4,14 @@ import { ThemeProvider } from './theme/ThemeContext';
 import { ToastProvider } from './toast/ToastContext';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import { Layout } from './components/Layout';
+import { AppShell } from './components/AppShell';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { AdminTaxYearsPage } from './pages/AdminTaxYearsPage';
 import { AdminTaxYearFormPage } from './pages/AdminTaxYearFormPage';
+import { ChatPage } from './pages/ChatPage';
+import { ReportPage } from './pages/ReportPage';
 import './App.css';
 
 export default function App() {
@@ -46,6 +49,18 @@ export default function App() {
                     </ProtectedRoute>
                   }
                 />
+              </Route>
+
+              <Route
+                element={
+                  <ProtectedRoute>
+                    <AppShell />
+                  </ProtectedRoute>
+                }
+              >
+                <Route path="/chat" element={<ChatPage />} />
+                <Route path="/chat/:id" element={<ChatPage />} />
+                <Route path="/reports/:id" element={<ReportPage />} />
               </Route>
             </Routes>
           </BrowserRouter>
